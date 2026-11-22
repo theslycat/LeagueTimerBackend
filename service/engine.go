@@ -111,14 +111,60 @@ type TeamState struct {
 	legByNo  map[int]*LegState
 }
 
-// Leg 按棒次取棒
+// Leg 按棒次编号取棒（编号仅用于展示，规则判断一律按顺序位置）
 func (t *TeamState) Leg(no int) *LegState { return t.legByNo[no] }
 
-// NextLeg 下一棒（棒次 +1）
-func (t *TeamState) NextLeg(no int) *LegState { return t.legByNo[no+1] }
+// FirstLeg 第一棒：名单顺序最靠前的一棒（不依赖编号是否为 1）
+func (t *TeamState) FirstLeg() *LegState {
+	if len(t.Legs) == 0 {
+		return nil
+	}
+	return t.Legs[0]
+}
 
-// PrevLeg 上一棒（棒次 -1）
-func (t *TeamState) PrevLeg(no int) *LegState { return t.legByNo[no-1] }
+// LastLeg 终点棒：名单顺序最后一棒（不依赖编号是否为 6）
+func (t *TeamState) LastLeg() *LegState {
+	if len(t.Legs) == 0 {
+		return nil
+	}
+	return t.Legs[len(t.Legs)-1]
+}
+
+// IsFirst / IsLast 按位置判断首棒与终点棒
+func (t *TeamState) IsFirst(leg *LegState) bool {
+	return leg != nil && len(t.Legs) > 0 && t.Legs[0] == leg
+}
+
+func (t *TeamState) IsLast(leg *LegState) bool {
+	return leg != nil && len(t.Legs) > 0 && t.Legs[len(t.Legs)-1] == leg
+}
+
+// legIndex 该棒在队伍顺序中的下标（不在名单中返回 -1）
+func (t *TeamState) legIndex(leg *LegState) int {
+	for i, l := range t.Legs {
+		if l == leg {
+			return i
+		}
+	}
+	return -1
+}
+
+// NextLegOf / PrevLegOf 按名单顺序取相邻一棒（越界返回 nil）
+func (t *TeamState) NextLegOf(leg *LegState) *LegState {
+	i := t.legIndex(leg)
+	if i < 0 || i+1 >= len(t.Legs) {
+		return nil
+	}
+	return t.Legs[i+1]
+}
+
+func (t *TeamState) PrevLegOf(leg *LegState) *LegState {
+	i := t.legIndex(leg)
+	if i <= 0 {
+		return nil
+	}
+	return t.Legs[i-1]
+}
 
 // HasWithdrawal 队内是否有选手退赛（该队不参与团体排名）
 func (t *TeamState) HasWithdrawal() bool {
@@ -231,9 +277,9 @@ func BuildSnapshot(teams []model.Team, runners []model.Runner, events []model.Ra
 	}
 	for _, team := range s.Teams {
 		sort.SliceStable(team.Legs, func(i, j int) bool { return team.Legs[i].No < team.Legs[j].No })
-		// 发令：第一棒统一于 0ms 出发
+		// 发令：第一棒统一于 0ms 出发（第一棒按名单位置取，不依赖编号是否为 1）
 		if raceStarted {
-			if first := team.legByNo[1]; first != nil && !first.Started {
+			if first := team.FirstLeg(); first != nil && !first.Started {
 				first.Started = true
 				first.StartMs = 0
 				first.Belt = model.BeltNormal
@@ -332,18 +378,18 @@ func (s *Snapshot) CheckExchange(runnerId int64) (*LegState, *ruleError) {
 	if leg.Withdrew {
 		return nil, invalidRule("第%d棒 %s 已退赛，不能记录交接", leg.No, leg.Name)
 	}
-	if leg.No < model.LegsPerTeam {
-		next := team.NextLeg(leg.No)
-		if next == nil {
-			return nil, invalidRule("第%d棒之后的选手不在名单中，无法交接", leg.No)
-		}
-		if next.Started {
-			return nil, invalidRule("第%d棒 %s 已（用备用带）出发，请改用「补录到达」", next.No, next.Name)
-		}
-		return next, nil
+	// 终点棒（名单位置最后一棒）：冲线，无下一棒
+	if team.IsLast(leg) {
+		return nil, nil
 	}
-	// 第 6 棒：冲线，无下一棒
-	return nil, nil
+	next := team.NextLegOf(leg)
+	if next == nil {
+		return nil, invalidRule("第%d棒之后的选手不在名单中，无法交接", leg.No)
+	}
+	if next.Started {
+		return nil, invalidRule("第%d棒 %s 已（用备用带）出发，请改用「补录到达」", next.No, next.Name)
+	}
+	return next, nil
 }
 
 // CheckBackupStart 备用带出发：本棒未出发、上一棒在途；
@@ -356,11 +402,11 @@ func (s *Snapshot) CheckBackupStart(runnerId int64, ms int64) (int64, *ruleError
 	if leg.Started {
 		return 0, invalidRule("第%d棒 %s 已出发", leg.No, leg.Name)
 	}
-	if leg.No == 1 {
+	team := s.teamByRunner[runnerId]
+	if team.IsFirst(leg) {
 		return 0, invalidRule("第一棒随发令统一出发，无需备用带")
 	}
-	team := s.teamByRunner[runnerId]
-	prev := team.PrevLeg(leg.No)
+	prev := team.PrevLegOf(leg)
 	if prev == nil {
 		return 0, invalidRule("第%d棒之前的选手不在名单中", leg.No)
 	}
@@ -395,10 +441,10 @@ func (s *Snapshot) CheckSoloFinish(runnerId int64) *ruleError {
 	if leg.Withdrew {
 		return invalidRule("第%d棒 %s 已退赛，不能补录成绩", leg.No, leg.Name)
 	}
-	if leg.No >= model.LegsPerTeam {
+	if team.IsLast(leg) {
 		return invalidRule("第%d棒为终点棒，请使用「冲线」记录", leg.No)
 	}
-	next := team.NextLeg(leg.No)
+	next := team.NextLegOf(leg)
 	if next == nil {
 		return invalidRule("第%d棒之后的选手不在名单中", leg.No)
 	}

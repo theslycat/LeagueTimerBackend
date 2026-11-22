@@ -351,3 +351,75 @@ func TestIndividualRankingExcludesWithdrawn(t *testing.T) {
 		t.Fatal("无人完赛时女子榜应为空")
 	}
 }
+
+// 旧版种子数据（每队 2 人、棒次编号 101/102）：第一棒仍须发令即出发，
+// 规则判断按名单位置而非棒次编号。
+func TestFirstLegDepartsWithNonStandardNumbering(t *testing.T) {
+	teams := []model.Team{{Id: 1, Name: "旧名单队"}}
+	runners := []model.Runner{
+		{Id: 101, TeamId: 1, No: 101, Name: "甲", Gender: "M"},
+		{Id: 102, TeamId: 1, No: 102, Name: "乙", Gender: "M"},
+	}
+	snap := BuildSnapshot(teams, runners, nil, true)
+	ts := snap.Teams[0]
+	first := ts.FirstLeg()
+	if first == nil || first.No != 101 {
+		t.Fatalf("第一棒应按名单位置取到 101 号：%+v", first)
+	}
+	if !first.Started || first.StartMs != 0 || first.Belt != model.BeltNormal {
+		t.Fatalf("发令后第一棒应在 0ms 常规带出发（不得依赖编号为 1）：%+v", first)
+	}
+	if ts.LastLeg().No != 102 {
+		t.Fatalf("终点棒应为名单位置最后一棒：%+v", ts.LastLeg())
+	}
+	// 交接：101 → 自动启动 102
+	next, rerr := snap.CheckExchange(101)
+	if rerr != nil || next == nil || next.No != 102 {
+		t.Fatalf("交接应派生名单位置的下一棒：%v %+v", rerr, next)
+	}
+	// 记录 101→102 的交接后，102 成为在途的终点棒：交接即冲线，无下一棒
+	applyNext := int64(102)
+	snap2 := BuildSnapshot(teams, runners, []model.RaceEvent{
+		{Id: 1, Type: model.EventExchange, RunnerId: 101, NextRunnerId: &applyNext, Ms: 1500000},
+	}, true)
+	next, rerr = snap2.CheckExchange(102)
+	if rerr != nil || next != nil {
+		t.Fatalf("最后一棒交接应视为冲线：%v %+v", rerr, next)
+	}
+	if !snap2.Teams[0].Leg(102).OnCourse() {
+		t.Fatal("交接后 102 应在途")
+	}
+	// 第一棒（101）不能申请备用带
+	if _, rerr := snap.CheckBackupStart(101, 3000000); rerr == nil {
+		t.Fatal("名单位置第一棒不允许备用带出发")
+	}
+}
+
+// 名单仅两棒时：终点棒判断按位置，不因编号小于 6 而误判为可补录。
+func TestShortRosterLastLegIsFinish(t *testing.T) {
+	teams := []model.Team{{Id: 1, Name: "短名单"}}
+	runners := []model.Runner{
+		{Id: 201, TeamId: 1, No: 1, Name: "甲", Gender: "M"},
+		{Id: 202, TeamId: 1, No: 2, Name: "乙", Gender: "M"},
+	}
+	snap := BuildSnapshot(teams, runners, nil, true)
+	if rerr := snap.CheckSoloFinish(202); rerr == nil {
+		t.Fatal("最后一棒不能补录（应走冲线）")
+	}
+}
+
+// 空名单队伍：不得 panic，也不产生在途选手
+func TestEmptyRosterTeam(t *testing.T) {
+	teams := []model.Team{{Id: 1, Name: "空队"}}
+	snap := BuildSnapshot(teams, nil, nil, true)
+	ts := snap.Teams[0]
+	if ts.FirstLeg() != nil || ts.LastLeg() != nil {
+		t.Fatal("空名单队伍不应有首/末棒")
+	}
+	if ts.AllFinished() || ts.Qualified() {
+		t.Fatal("空名单队伍不应判定完成或有资格")
+	}
+	if rows := snap.OnCourseRows(0); len(rows) != 0 {
+		t.Fatalf("空名单队伍不应产生在途行：%d", len(rows))
+	}
+}
