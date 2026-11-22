@@ -24,7 +24,8 @@ func Init() error {
 		dataBase = "league_timer"
 	}
 	source = fmt.Sprintf(source, user, pwd, addr, dataBase)
-	fmt.Println("start init mysql with ", source)
+	// 只打印脱敏信息：绝不把密码写进日志（云托管日志可被多人查看）
+	fmt.Printf("start init mysql with user=%s addr=%s database=%s\n", user, addr, dataBase)
 
 	db, err := gorm.Open(mysql.Open(source), &gorm.Config{
 		NamingStrategy: schema.NamingStrategy{
@@ -50,7 +51,7 @@ func Init() error {
 
 	dbInstance = db
 
-	fmt.Println("finish init mysql with ", source)
+	fmt.Printf("finish init mysql with user=%s addr=%s database=%s\n", user, addr, dataBase)
 	return nil
 }
 
