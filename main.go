@@ -29,7 +29,7 @@ func main() {
 	http.HandleFunc("/api/race/terminate", service.RaceTerminateHandler)
 	http.HandleFunc("/api/race/reset", service.RaceResetHandler)
 	http.HandleFunc("/api/participants", service.ParticipantsHandler)
-	http.HandleFunc("/api/records", service.RecordsHandler)
+	http.HandleFunc("/api/events", service.EventsHandler)
 	http.HandleFunc("/api/ranking", service.RankingHandler)
 
 	// 云托管容器监听 80；本地调试可用 PORT 环境变量覆盖（如 PORT=8080）

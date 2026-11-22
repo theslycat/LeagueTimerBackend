@@ -10,14 +10,17 @@ import (
 
 // 业务错误码
 const (
-	CodeOK               = 0     // 成功
-	CodeGeneric          = -1    // 通用业务错误
-	CodeInternal         = 500   // 内部错误（不向前端透出细节）
-	CodeUnauthorized     = 40100 // 未登录 / token 无效或过期
-	CodeForbidden        = 40300 // 无权限
-	CodeRaceNotRunning   = 40001 // 比赛未开始或已暂停
-	CodeRecordDuplicated = 40002 // 该选手已记录交接时间
-	CodeRunnerNotFound   = 40003 // 选手不存在
+	CodeOK             = 0     // 成功
+	CodeGeneric        = -1    // 通用业务错误
+	CodeInternal       = 500   // 内部错误（不向前端透出细节）
+	CodeUnauthorized   = 40100 // 未登录 / token 无效或过期
+	CodeForbidden      = 40300 // 无权限
+	CodeRaceNotRunning = 40001 // 比赛未开始或已结束
+	CodeEventInvalid   = 40004 // 事件状态不满足（交接/备用带/补录/退赛校验失败）
+	CodeEventEarly     = 40005 // 备用带早于规则时刻，需确认放行（data.earliestMs）
+	CodeEventConflict  = 40006 // 撤销被后续记录依赖
+	CodeRosterLocked   = 40007 // 名单已锁定（比赛开始后不可修改）
+	CodeRosterInvalid  = 40008 // 名单格式或内容不合法
 )
 
 // JsonResult 返回结构（与模板保持一致的响应包）
@@ -27,10 +30,11 @@ type JsonResult struct {
 	Data     interface{} `json:"data"`
 }
 
-// bizError 业务错误：携带错误码与对外展示文案
+// bizError 业务错误：携带错误码与对外展示文案；data 为可选附加信息
 type bizError struct {
 	code int
 	msg  string
+	data interface{}
 }
 
 func (e *bizError) Error() string { return e.msg }
@@ -69,9 +73,18 @@ func sendError(w http.ResponseWriter, code int, msg string) {
 	writeJson(w, &JsonResult{Code: code, ErrorMsg: msg})
 }
 
+// sendErrorWithData 携带附加信息的业务错误（如备用带最早出发时刻）
+func sendErrorWithData(w http.ResponseWriter, code int, msg string, data interface{}) {
+	writeJson(w, &JsonResult{Code: code, ErrorMsg: msg, Data: data})
+}
+
 // fail 将错误转换为响应：业务错误按码返回，其余按内部错误处理
 func fail(w http.ResponseWriter, err error) {
 	if be, ok := err.(*bizError); ok {
+		if be.data != nil {
+			sendErrorWithData(w, be.code, be.msg, be.data)
+			return
+		}
 		sendError(w, be.code, be.msg)
 		return
 	}

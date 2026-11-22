@@ -62,7 +62,7 @@ func RaceHandler(w http.ResponseWriter, r *http.Request) {
 
 // raceTransition 比赛状态流转接口的统一封装（仅主裁判、仅 POST）：
 // 按钮合法但状态不满足时返回 code -1 与具体文案
-func raceTransition(action func(now time.Time) (*model.Race, error)) http.HandlerFunc {
+func raceTransition(action func(now time.Time) (*model.Race, error), confirm string, confirmTitle string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			methodError(w, r.Method)
@@ -79,31 +79,35 @@ func raceTransition(action func(now time.Time) (*model.Race, error)) http.Handle
 	}
 }
 
-// RaceStartHandler POST /api/race/start 开始比赛（仅主裁判）
+// RaceStartHandler POST /api/race/start 发令开始比赛（仅主裁判，8:00 统一发令）
 func RaceStartHandler(w http.ResponseWriter, r *http.Request) {
-	raceTransition(dao.RaceImp.StartRace)(w, r)
+	raceTransition(dao.RaceImp.StartRace, "", "")(w, r)
 }
 
-// RacePauseHandler POST /api/race/pause 暂停比赛（仅主裁判）
-func RacePauseHandler(w http.ResponseWriter, r *http.Request) {
-	raceTransition(dao.RaceImp.PauseRace)(w, r)
-}
-
-// RaceTerminateHandler POST /api/race/terminate 终止比赛（仅主裁判）
+// RaceTerminateHandler POST /api/race/terminate 终止比赛（仅主裁判）。
+// 按赛制无「暂停」：发令后计时不可中止，误发令用终止 + 重置补救。
 func RaceTerminateHandler(w http.ResponseWriter, r *http.Request) {
-	raceTransition(dao.RaceImp.TerminateRace)(w, r)
+	raceTransition(dao.RaceImp.TerminateRace, "", "")(w, r)
 }
 
-// RaceResetHandler POST /api/race/reset 重置比赛并清空记录（仅主裁判）
+// RaceResetHandler POST /api/race/reset 重置比赛并清空事件（仅主裁判）
 func RaceResetHandler(w http.ResponseWriter, r *http.Request) {
-	raceTransition(dao.RaceImp.ResetRace)(w, r)
+	raceTransition(dao.RaceImp.ResetRace, "", "")(w, r)
+}
+
+// RacePauseHandler 暂停接口已按赛制移除：发令后比赛计时不可中止
+func RacePauseHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodError(w, r.Method)
+		return
+	}
+	sendError(w, CodeGeneric, "按赛制比赛不支持暂停：误发令请用「终止 + 重置」补救")
 }
 
 // isRaceStateError 是否属于状态机层面可对外展示的错误
 func isRaceStateError(err error) bool {
 	return errors.Is(err, dao.ErrRaceAlreadyRunning) ||
 		errors.Is(err, dao.ErrRaceNotStarted) ||
-		errors.Is(err, dao.ErrRacePaused) ||
 		errors.Is(err, dao.ErrRaceFinished)
 }
 

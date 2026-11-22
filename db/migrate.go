@@ -15,7 +15,7 @@ func Migrate() error {
 		&model.Team{},
 		&model.Runner{},
 		&model.Race{},
-		&model.Record{},
+		&model.RaceEvent{},
 	); err != nil {
 		return err
 	}
@@ -24,6 +24,7 @@ func Migrate() error {
 
 // seed 幂等种子：race 单例行、演示队伍与选手。
 // 仅在对应表为空时写入，重复启动不会产生重复数据。
+// 演示名单遵循赛制：六棒制，第一至五棒男生、第六棒女生。
 func seed(cli *gorm.DB) error {
 	// race 单例：idle
 	var raceCount int64
@@ -37,34 +38,36 @@ func seed(cli *gorm.DB) error {
 		}
 	}
 
-	// 队伍与选手（空表才插入，沿用前端演示名单）
+	// 队伍与选手（空表才插入；正式名单由主裁判在登录页导入）
 	var teamCount int64
 	if err := cli.Model(&model.Team{}).Count(&teamCount).Error; err != nil {
 		return err
 	}
 	if teamCount == 0 {
-		type seedRunner struct {
-			No   int
-			Name string
+		male := func(no int, name string) model.Runner {
+			return model.Runner{No: no, Name: name, Gender: "M"}
 		}
-		type seedTeam struct {
-			Name    string
-			Runners []seedRunner
+		female := func(no int, name string) model.Runner {
+			return model.Runner{No: no, Name: name, Gender: "F"}
 		}
-		teams := []seedTeam{
-			{"青云跑团", []seedRunner{{101, "陈家豪"}, {102, "林亦舟"}}},
-			{"山岳学院", []seedRunner{{103, "周子昂"}, {104, "苏婉清"}}},
-			{"江畔大学", []seedRunner{{105, "何宇航"}, {106, "顾晓岚"}}},
-			{"北岭俱乐部", []seedRunner{{107, "邵一鸣"}, {108, "罗雨桐"}}},
-			{"曙光中学", []seedRunner{{109, "高梓涵"}, {110, "郑天翊"}}},
+		teams := [][]model.Runner{
+			{
+				male(1, "陈家豪"), male(2, "林亦舟"), male(3, "周子昂"),
+				male(4, "何宇航"), male(5, "邵一鸣"), female(6, "苏婉清"),
+			},
+			{
+				male(1, "高梓涵"), male(2, "郑天翊"), male(3, "罗雨桐"),
+				male(4, "顾晓岚"), male(5, "王靖杰"), female(6, "李静姝"),
+			},
 		}
-		for _, st := range teams {
-			team := model.Team{Name: st.Name}
+		for i, runners := range teams {
+			team := model.Team{Name: "演示跑团 " + string(rune('A'+i))}
 			if err := cli.Create(&team).Error; err != nil {
 				return err
 			}
-			for _, sr := range st.Runners {
-				runner := model.Runner{TeamId: team.Id, No: sr.No, Name: sr.Name}
+			for j := range runners {
+				runner := runners[j]
+				runner.TeamId = team.Id
 				if err := cli.Create(&runner).Error; err != nil {
 					return err
 				}
